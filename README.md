@@ -44,7 +44,7 @@ Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
 | `config/game.toml` | The XBE's function map from `xbe_symbols`, plus hand-found D3D/XAPI functions with no XDK 5849 signature |
 | `src/game/hooks.cpp` | Game-specific replacements of recompiled functions |
 | `src/common/game_info.cpp` | Titles and runtime hooks |
-| `sdk/` | XboxXBERecomp (MIT, TGP482), vendored with the MVP 06 fixes below |
+| `sdk/` | XboxXBERecomp (MIT, TGP482) at upstream `f7b13fd`, vendored with the MVP 06 fixes below; only what the build needs |
 
 ### SDK changes for MVP 06
 
@@ -67,7 +67,7 @@ Each is enabled by an environment variable:
 
 ## History
 
-This repository previously held an LLE port on the xboxrecomp toolkit (NV2A pushbuffer emulation with a D3D11 renderer). That version is kept in the git history, ending at commit `960363e`. It ran at 30–40 FPS but stalled for about a minute between pitches. This XboxXBERecomp port replaces it.
+An earlier LLE port on the xboxrecomp toolkit (NV2A pushbuffer emulation with a D3D11 renderer) ran at 30–40 FPS but stalled for about a minute between pitches. This XboxXBERecomp port replaces it. The old version lives on in [awest813/xboxrecomp](https://github.com/awest813/xboxrecomp) under `mvp06/`.
 
 ## Credits
 
