@@ -13,14 +13,22 @@ Not working: Xbox Live sign-in (the service is gone; the attempt times out after
 
 ## Installation
 
-- Put your game files in the `assets` folder. This can be an ISO, or the extracted data files.
+- Put your game files in the `assets` folder. This can be an ISO, or the extracted data files. You can also skip this and pick the ISO or `default.xbe` wherever it is from the launcher.
 - Run `MVP06.exe`. The first start compiles the game's code for your PC; this only happens once.
-- Recomp settings can be adjusted in `settings.toml` beside the exe.
+- Recomp settings can be adjusted in the launcher or in `settings.toml` beside the exe.
 
 ## Features
 
 ### Controller
 Supports Xbox, PlayStation and Switch controllers, with hot plugging and rumble.
+
+### Launcher
+Each start opens a launcher before the game: the game to play (the extracted files or ISOs found in `assets`, or **Browse** for one anywhere) and the display, frame rate and texture settings. Use the arrow keys, the mouse or a controller's d-pad; Enter or A plays, Esc or B exits. With **Show this launcher at start** off, the game starts at once; hold Shift while starting it to bring the launcher back.
+
+### Display
+- **Fullscreen** switches the monitor to the chosen resolution, at the desktop's refresh rate where the monitor offers it there, and gives the desktop back while you alt-tab away. **Borderless** covers the screen at the desktop's resolution.
+- **Alt+Enter** toggles between windowed and the fullscreen or borderless mode you were in.
+- The mouse pointer hides over the game after two seconds without moving, and the display does not sleep while the game is in front.
 
 ### Miscellaneous
 - **Boot Splash** - Place a `splash.png` (or `.bmp`) beside the exe to display a splash screen at launch.

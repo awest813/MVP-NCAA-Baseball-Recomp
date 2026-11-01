@@ -3323,6 +3323,8 @@ void D3D12Backend::Copy(const Surface& src, const Surface& dst, uint32_t count, 
 
 void D3D12Backend::ResizeSwap() {
     HWND hwnd = static_cast<HWND>(app::Window());
+    // minimized, the client area is empty: the buffers stay as they are for the return
+    if (IsIconic(hwnd)) return;
     RECT rc;
     GetClientRect(hwnd, &rc);
     uint32_t w = std::max<LONG>(rc.right - rc.left, 1);

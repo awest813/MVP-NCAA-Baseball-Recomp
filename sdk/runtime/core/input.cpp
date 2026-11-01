@@ -115,8 +115,10 @@ Pad Poll(int port) {
 
 uint16_t HeldOnAnyController() {
     constexpr std::pair<SDL_GamepadButton, uint16_t> kFaceButtons[] = {
-        {SDL_GAMEPAD_BUTTON_SOUTH, 0x1000}, {SDL_GAMEPAD_BUTTON_EAST, 0x2000},
-        {SDL_GAMEPAD_BUTTON_WEST, 0x4000},  {SDL_GAMEPAD_BUTTON_NORTH, 0x8000}};
+        {SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001},   {SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002},
+        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004}, {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008},
+        {SDL_GAMEPAD_BUTTON_SOUTH, 0x1000},     {SDL_GAMEPAD_BUTTON_EAST, 0x2000},
+        {SDL_GAMEPAD_BUTTON_WEST, 0x4000},      {SDL_GAMEPAD_BUTTON_NORTH, 0x8000}};
     std::lock_guard lock(g_lock);
     UpdatePads();
     uint16_t held = 0;

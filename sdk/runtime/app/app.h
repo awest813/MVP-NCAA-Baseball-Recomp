@@ -27,6 +27,8 @@ struct Settings {
     bool dump_textures = false;      // each texture once into textures\dumps\ beside the exe
     uint32_t texture_dump_format = 0;  // 0 PNG, 1 DDS
     std::string join_ip;                   // co-op: a host past the LAN the system link search also asks
+    std::string game;                // picked in the launcher: a folder or a disc image, UTF-8, relative to the exe's folder or whole
+    bool launcher = true;            // the launcher before each start; Shift held at the start shows it anyway
 };
 
 Settings& Get();
@@ -52,6 +54,13 @@ struct GameFiles {
     std::vector<uint8_t> xbe;
 };
 bool FindGame(GameFiles& game);
+std::filesystem::path AssetsDir();  // empty when there is none
+// the games the launcher offers and FindGame tries, in that order: the picked one, then assets' extracted files and
+// its disc images
+std::vector<std::filesystem::path> GameChoices();
+// the launcher (launcher.cpp): the settings and the game, before the game code is prepared; false when the player
+// chose Exit
+bool Launch();
 std::string Sha1(const std::vector<uint8_t>& data);  // lower case hex
 // the recompiled code, <exe>.dll, built from the game in assets when missing or out of date (game_code.cpp) and
 // loaded; false after telling the player why the game cannot start, or when they chose not to start it yet

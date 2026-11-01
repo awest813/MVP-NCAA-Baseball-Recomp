@@ -33,8 +33,12 @@ namespace {
 
 HWND g_hwnd = nullptr;
 constexpr UINT kApplyDisplay = WM_APP + 1, kOpenWindow = WM_APP + 2;
+constexpr UINT_PTR kCursorTimer = 1;
+constexpr ULONGLONG kCursorIdleMs = 2000;  // the pointer hides over the game once still this long
 bool g_mode_changed = false;
 bool g_apply_posted = false;  // a display apply is waiting in the queue or running
+ULONGLONG g_mouse_moved = 0;  // GetTickCount64 at the last move over the game
+POINT g_mouse_at{-1, -1};     // where it was then, screen coordinates: a window change sends a move that is none
 
 // crash dump in CrashDumps beside the exe
 LONG WINAPI WriteCrashDump(EXCEPTION_POINTERS* e) {
@@ -87,6 +91,7 @@ void ApplyNow() {
     if (g_mode_changed) {
         ChangeDisplaySettingsExW(mi.szDevice, nullptr, nullptr, 0, nullptr);
         g_mode_changed = false;
+        GetMonitorInfoW(mon, &mi);  // the desktop's size again, which a windowed window is placed in
     }
     Mode out = Output();
     LONG_PTR visible = IsWindowVisible(g_hwnd) ? WS_VISIBLE : 0;  // a window held back for a splash or handover stays so
@@ -100,15 +105,35 @@ void ApplyNow() {
         dm.dmSize = sizeof(dm);
         dm.dmPelsWidth = s.width;
         dm.dmPelsHeight = s.height;
-        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
-        g_mode_changed = ChangeDisplaySettingsExW(mi.szDevice, &dm, nullptr, CDS_FULLSCREEN, nullptr) == DISP_CHANGE_SUCCESSFUL;
+        // at the desktop's refresh rate where the monitor has it at this size; without one, Windows often picks 60 Hz
+        dm.dmDisplayFrequency = desktop.dmDisplayFrequency;
+        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+        if (ChangeDisplaySettingsExW(mi.szDevice, &dm, nullptr, CDS_TEST, nullptr) != DISP_CHANGE_SUCCESSFUL)
+            dm.dmFields &= ~DM_DISPLAYFREQUENCY;
+        LONG result = ChangeDisplaySettingsExW(mi.szDevice, &dm, nullptr, CDS_FULLSCREEN, nullptr);
+        g_mode_changed = result == DISP_CHANGE_SUCCESSFUL;
+        if (g_mode_changed) {
+            DEVMODEW now{};
+            now.dmSize = sizeof(now);
+            EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &now);
+            LOGR("Display: fullscreen %ux%u at %lu Hz", s.width, s.height, now.dmDisplayFrequency);
+        } else {
+            LOGW("display: the monitor refused %ux%u (%ld), staying at the desktop's", s.width, s.height, result);
+        }
         GetMonitorInfoW(mon, &mi);
     }
     if (s.display_mode == DisplayMode::Windowed) {
-        RECT r{0, 0, LONG(out.width), LONG(out.height)};
-        AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
-        int w = r.right - r.left, h = r.bottom - r.top;
+        // the frame at this window's DPI; a window that would not fit the work area shrinks, keeping its shape
         const RECT& a = mi.rcWork;
+        UINT dpi = GetDpiForWindow(g_hwnd);
+        RECT frame{};
+        AdjustWindowRectExForDpi(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
+        LONG room_w = (a.right - a.left) - (frame.right - frame.left);
+        LONG room_h = (a.bottom - a.top) - (frame.bottom - frame.top);
+        double fit = std::min({1.0, double(room_w) / out.width, double(room_h) / out.height});
+        RECT r{0, 0, LONG(out.width * fit), LONG(out.height * fit)};
+        AdjustWindowRectExForDpi(&r, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
+        int w = r.right - r.left, h = r.bottom - r.top;
         SetWindowLongPtrW(g_hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | visible);
         SetWindowPos(g_hwnd, HWND_NOTOPMOST, a.left + (a.right - a.left - w) / 2, a.top + (a.bottom - a.top - h) / 2, w, h,
                      SWP_FRAMECHANGED);
@@ -119,7 +144,48 @@ void ApplyNow() {
     }
 }
 
+// Alt+Enter: windowed, then back to the fullscreen or borderless it came from; kept in the settings file
+void ToggleWindowed() {
+    static DisplayMode full = DisplayMode::Borderless;
+    Settings& s = Get();
+    if (s.display_mode == DisplayMode::Windowed) {
+        s.display_mode = full;
+    } else {
+        full = s.display_mode;
+        s.display_mode = DisplayMode::Windowed;
+    }
+    Save();
+    ApplyNow();
+}
+
+// the game takes no mouse: over it the pointer hides once still, unless an ImGui window wants it
+bool CursorHidden() {
+    POINT at;
+    GetCursorPos(&at);
+    ULONGLONG now = GetTickCount64();
+    if (at.x != g_mouse_at.x || at.y != g_mouse_at.y) {
+        g_mouse_at = at;
+        g_mouse_moved = now;
+    }
+    std::lock_guard lock(UiLock());
+    bool imgui = ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
+    return now - g_mouse_moved >= kCursorIdleMs && !imgui;
+}
+
+// the pointer only changes on WM_SETCURSOR, which a still mouse does not send
+void HideIdleCursor(HWND hwnd) {
+    POINT at;
+    GetCursorPos(&at);
+    if (WindowFromPoint(at) != hwnd || SendMessageW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(at.x, at.y)) != HTCLIENT) return;
+    if (CursorHidden()) SetCursor(nullptr);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // ahead of ImGui's handler, which sets the arrow
+    if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && CursorHidden()) {
+        SetCursor(nullptr);
+        return TRUE;
+    }
     {
         std::lock_guard lock(UiLock());
         if (ImGui::GetCurrentContext() && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
@@ -129,7 +195,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_KEYDOWN:
             if (wp == VK_F3) DumpThreads();
             return 0;
+        case WM_SYSKEYDOWN:
+            if (wp == VK_RETURN && (HIWORD(lp) & KF_ALTDOWN) && !(HIWORD(lp) & KF_REPEAT)) {
+                ToggleWindowed();
+                return 0;
+            }
+            break;
+        case WM_SYSCHAR:
+            if (wp == VK_RETURN) return 0;  // Alt+Enter, without the beep
+            break;
+        case WM_TIMER:
+            if (wp == kCursorTimer) HideIdleCursor(hwnd);
+            return 0;
         case WM_ACTIVATE:
+            // the display stays on while the game is in front: a controller does not count as input to Windows' idle
+            // timer, so a long game turned the screen off
+            SetThreadExecutionState(LOWORD(wp) == WA_INACTIVE ? ES_CONTINUOUS : ES_CONTINUOUS | ES_DISPLAY_REQUIRED);
             if (LOWORD(wp) == WA_INACTIVE) {
                 // a changed display mode steps aside for the desktop, minimized, and comes back on return; not while
                 // handing over to the next instance, which runs in the same mode
@@ -251,6 +332,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     logx::Init((app::ExeDir() / "logs").string(), log, relaunched);
     app::Load();
     if (app::kGame.init) app::kGame.init();
+    // a relaunch into another image carries on with what the first start picked
+    if (!relaunched && !app::Launch()) return 0;
     if (relaunched && !logx::kVerbose) LOGR("Relaunched: %s", IMAGE_XBE);
     else app::LogSystem();
 
@@ -284,6 +367,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
     ImGui_ImplWin32_Init(app::g_hwnd);
+    SetTimer(app::g_hwnd, app::kCursorTimer, 250, nullptr);
 
     input::Init();
     if (app::kGame.window) app::kGame.window(app::g_hwnd);

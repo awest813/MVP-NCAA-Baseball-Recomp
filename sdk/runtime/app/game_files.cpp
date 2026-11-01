@@ -1,4 +1,5 @@
-// The game in assets: its files, or a disc image (.iso) with this executable's xbe on it. The xbe must be the one
+// The game picked in the launcher, else the one in assets: its files, or a disc image (.iso) with this executable's xbe
+// on it. The xbe must be the one
 // this executable was recompiled from; another release's would run its own data under this code.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,20 +23,14 @@ extern const char kImageSha1[];  // the xbe recompiled into this executable, wri
 
 namespace app {
 
-namespace {
-
 namespace fs = std::filesystem;
 
-// assets beside the exe or in any folder above it (the build output)
-fs::path FindAssets() {
-    auto dir = ExeDir();
-    std::error_code ec;
-    for (int i = 0; i < 6; i++) {
-        if (fs::is_directory(dir / "assets", ec)) return dir / "assets";
-        if (!dir.has_parent_path() || dir.parent_path() == dir) break;
-        dir = dir.parent_path();
-    }
-    return {};
+namespace {
+
+bool IsDiscImage(const fs::path& path) {
+    std::wstring ext = path.extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
+    return ext == L".iso";
 }
 
 bool ReadHostFile(const fs::path& path, std::vector<uint8_t>& out) {
@@ -61,33 +56,57 @@ std::string Sha1(const std::vector<uint8_t>& data) {
     return hex;
 }
 
-bool FindGame(GameFiles& game) {
-    fs::path assets = FindAssets();
-    std::vector<fs::path> isos;
+// assets beside the exe or in any folder above it (the build output)
+fs::path AssetsDir() {
+    auto dir = ExeDir();
     std::error_code ec;
-    if (!assets.empty())
-        for (auto& e : fs::directory_iterator(assets, ec)) {
-            std::wstring ext = e.path().extension().wstring();
-            std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t c) { return wchar_t(std::towlower(c)); });
-            if (ext == L".iso" && e.is_regular_file(ec)) isos.push_back(e.path());
-        }
-    std::sort(isos.begin(), isos.end());
+    for (int i = 0; i < 6; i++) {
+        if (fs::is_directory(dir / "assets", ec)) return dir / "assets";
+        if (!dir.has_parent_path() || dir.parent_path() == dir) break;
+        dir = dir.parent_path();
+    }
+    return {};
+}
 
-    // the first copy with this xbe wins, the extracted files before any image; another release is kept to offer
+std::vector<fs::path> GameChoices() {
+    std::vector<fs::path> games;
+    std::error_code ec;
+    if (const std::string& picked = Get().game; !picked.empty()) {
+        fs::path path = ExeDir() / fs::path(reinterpret_cast<const char8_t*>(picked.c_str()));
+        if (fs::exists(path, ec)) games.push_back(path.lexically_normal());
+        else LOGW("game: %s, picked in the launcher, is gone", picked.c_str());
+    }
+    std::vector<fs::path> found;
+    if (fs::path assets = AssetsDir(); !assets.empty()) {
+        if (fs::is_regular_file(assets / IMAGE_XBE, ec)) found.push_back(assets);
+        std::vector<fs::path> isos;
+        for (auto& e : fs::directory_iterator(assets, ec))
+            if (IsDiscImage(e.path()) && e.is_regular_file(ec)) isos.push_back(e.path());
+        std::sort(isos.begin(), isos.end());
+        found.insert(found.end(), isos.begin(), isos.end());
+    }
+    for (const fs::path& path : found)
+        if (games.empty() || !fs::equivalent(games[0], path, ec)) games.push_back(path);
+    return games;
+}
+
+bool FindGame(GameFiles& game) {
+    // the first copy with this xbe wins, in GameChoices order; another release is kept to offer
     GameFiles other;
     std::unique_ptr<kernel::Disc> other_disc;
     fs::path other_name;
-    auto consider = [&](const fs::path& name, std::vector<uint8_t> xbe, std::unique_ptr<kernel::Disc> disc) {
+    auto consider = [&](const fs::path& name, const fs::path& dir, std::vector<uint8_t> xbe,
+                        std::unique_ptr<kernel::Disc> disc) {
         std::string sha = Sha1(xbe);
         bool match = sha == kImageSha1;
         LOGR("Game: %s in %s, sha1 %s%s", IMAGE_XBE, name.string().c_str(), sha.c_str(), match ? "" : ", another release");
         if (match) {
-            game = {assets, std::move(xbe)};
+            game = {dir, std::move(xbe)};
             kernel::MountDisc(std::move(disc));
             return true;
         }
         if (other_name.empty()) {
-            other = {assets, std::move(xbe)};
+            other = {dir, std::move(xbe)};
             other_disc = std::move(disc);
             other_name = name;
         }
@@ -95,19 +114,22 @@ bool FindGame(GameFiles& game) {
     };
 
     std::vector<uint8_t> xbe;
-    if (!assets.empty() && ReadHostFile(assets / IMAGE_XBE, xbe) && consider(assets, std::move(xbe), nullptr)) return true;
-    for (const fs::path& iso : isos) {
+    for (const fs::path& path : GameChoices()) {
+        if (!IsDiscImage(path)) {
+            if (ReadHostFile(path / IMAGE_XBE, xbe) && consider(path, path, std::move(xbe), nullptr)) return true;
+            continue;
+        }
         auto disc = std::make_unique<kernel::Disc>();
         std::string error;
-        if (!disc->Open(iso, error)) {
-            LOGW("game: %s: %s", iso.string().c_str(), error.c_str());
+        if (!disc->Open(path, error)) {
+            LOGW("game: %s: %s", path.string().c_str(), error.c_str());
             continue;
         }
         if (!disc->Load(IMAGE_XBE, xbe)) {
-            LOGW("game: %s has no %s", iso.string().c_str(), IMAGE_XBE);
+            LOGW("game: %s has no %s", path.string().c_str(), IMAGE_XBE);
             continue;
         }
-        if (consider(iso, std::move(xbe), std::move(disc))) return true;
+        if (consider(path, path.parent_path(), std::move(xbe), std::move(disc))) return true;
     }
 
     if (other_name.empty()) {
